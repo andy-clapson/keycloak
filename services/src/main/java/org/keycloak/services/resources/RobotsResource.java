@@ -32,16 +32,12 @@ public class RobotsResource {
     @GET
     @Produces(MediaType.TEXT_PLAIN_UTF_8)
     public String getRobots() {
+        if isRobotsTxtEnabled()
         return Configuration.getConfigValue(RobotsTxtOptions.ROBOTS_TXT_CONTENTS);
     }
 
     private boolean isRobotsTxtEnabled() {
         return Configuration.isTrue(RobotsTxtOptions.ROBOTS_TXT_ENABLED);
-    }
-
-    private boolean isR obotsTxtEnabled() {
-        return Configuration.  
-
     }
 
 }
