@@ -17,6 +17,7 @@
 
 package org.keycloak.services.resources;
 
+import org.keycloak.config.RobotsTxtOptions;
 import org.keycloak.utils.MediaType;
 
 import jakarta.ws.rs.GET;
@@ -28,12 +29,19 @@ import jakarta.ws.rs.ext.Provider;
 @Path("/robots.txt")
 public class RobotsResource {
 
-    private static final String robots = "User-agent: *\n" + "Disallow: /";
-
     @GET
     @Produces(MediaType.TEXT_PLAIN_UTF_8)
     public String getRobots() {
-        return robots;
+        return Configuration.getConfigValue(RobotsTxtOptions.ROBOTS_TXT_CONTENTS);
+    }
+
+    private boolean isRobotsTxtEnabled() {
+        return Configuration.isTrue(RobotsTxtOptions.ROBOTS_TXT_ENABLED);
+    }
+
+    private boolean isR obotsTxtEnabled() {
+        return Configuration.  
+
     }
 
 }
