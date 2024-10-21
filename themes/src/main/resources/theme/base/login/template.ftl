@@ -6,7 +6,12 @@
 <head>
     <meta charset="utf-8">
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <#if properties.robots=="none">
+        <meta name="robots" content="noindex, nofollow">
+    </#if>
+    
     <meta name="robots" content="noindex, nofollow">
+    ${(properties.robots)?boolean?then(' dark', '')}
 
     <#if properties.meta?has_content>
         <#list properties.meta?split(' ') as meta>
