@@ -18,7 +18,10 @@
 package org.keycloak.testsuite.broker;
 
 import java.io.Closeable;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Map;
 
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.core.UriBuilder;
@@ -41,22 +44,24 @@ import org.keycloak.representations.idm.ComponentRepresentation;
 import org.keycloak.representations.idm.IdentityProviderRepresentation;
 import org.keycloak.representations.idm.KeysMetadataRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
-import org.keycloak.testsuite.Assert;
-import org.keycloak.testsuite.client.resources.TestingCacheResource;
+import org.keycloak.testsuite.broker.util.SimpleHttpDefault;
+import org.keycloak.testsuite.client.KeycloakTestingClient;
 import org.keycloak.testsuite.updaters.ClientAttributeUpdater;
 import org.keycloak.testsuite.util.AccountHelper;
 import org.keycloak.testsuite.util.broker.OIDCIdentityProviderConfigRep;
 import org.keycloak.testsuite.util.oauth.OAuthClient;
+import org.keycloak.testsuite.util.runonserver.CacheHelper;
 
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.jupiter.api.Assertions;
 
-import static org.keycloak.testsuite.admin.ApiUtil.createUserWithAdminClient;
-import static org.keycloak.testsuite.admin.ApiUtil.resetUserPassword;
+import static org.keycloak.testsuite.admin.AdminApiUtil.createUserWithAdminClient;
+import static org.keycloak.testsuite.admin.AdminApiUtil.resetUserPassword;
 import static org.keycloak.testsuite.broker.BrokerTestTools.getConsumerRoot;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 /**
  * @author <a href="mailto:mposolda@redhat.com">Marek Posolda</a>
@@ -108,7 +113,7 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
 
         // Check that user is able to login
         logInAsUserInIDPForFirstTime();
-        appPage.assertCurrent();
+        Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
 
         AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
 
@@ -122,10 +127,10 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
         AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
 
         // Set time offset. New keys can be downloaded. Check that user is able to login.
-        setTimeOffset(20);
+        timeOffSet.set(20);
 
         logInAsUserInIDPWithReAuthenticate();
-        appPage.assertCurrent();
+        Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
     }
 
     // Configure OIDC identity provider with JWKS URL and validateSignature=true
@@ -138,6 +143,19 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
         UriBuilder b = OIDCLoginProtocolService.certsUrl(UriBuilder.fromUri(OAuthClient.AUTH_SERVER_ROOT));
         String jwksUrl = b.build(bc.providerRealmName()).toString();
         cfg.setJwksUrl(jwksUrl);
+        updateIdentityProvider(idpRep);
+    }
+
+    private void updateIdentityProviderWithJwks() throws IOException {
+        IdentityProviderRepresentation idpRep = getIdentityProvider();
+        OIDCIdentityProviderConfigRep cfg = new OIDCIdentityProviderConfigRep(idpRep);
+        cfg.setValidateSignature(true);
+        cfg.setUseJwksUrl(false);
+
+        UriBuilder b = OIDCLoginProtocolService.certsUrl(UriBuilder.fromUri(OAuthClient.AUTH_SERVER_ROOT));
+        String jwks = SimpleHttpDefault.doGet(b.build(bc.providerRealmName()).toString(), oauth.httpClient().get()).asString();
+        cfg.setPublicKeySignatureVerifier(jwks);
+        cfg.setPublicKeySignatureVerifierKeyId("");
         updateIdentityProvider(idpRep);
     }
 
@@ -156,7 +174,7 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
 
         // Check that user is able to login
         logInAsUserInIDPForFirstTime();
-        appPage.assertCurrent();
+        Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
 
         AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
 
@@ -170,7 +188,7 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
         AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
 
         // Even after time offset is user not able to login, because it uses old key hardcoded in identityProvider config
-        setTimeOffset(20);
+        timeOffSet.set(20);
 
         logInAsUserInIDPWithReAuthenticate();
         assertErrorPage("Unexpected error when authenticating with identity provider");
@@ -196,7 +214,7 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
                 .update()) {
 
             logInAsUserInIDPForFirstTime();
-            appPage.assertCurrent();
+            Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
             AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
 
             logInAsUserInIDP();
@@ -224,7 +242,7 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
                 .update()) {
 
             logInAsUserInIDPForFirstTime();
-            appPage.assertCurrent();
+            Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
             AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
 
             logInAsUserInIDP();
@@ -233,7 +251,7 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
     }
 
     @Test
-    public void testSignatureVerificationHardcodedPublicKeyHS512() throws Exception {
+    public void testSignatureVerificationHardcodedPublicKeyHS512NotAllowed() throws Exception {
         IdentityProviderRepresentation idpRep = getIdentityProvider();
         OIDCIdentityProviderConfigRep cfg = new OIDCIdentityProviderConfigRep(idpRep);
         cfg.setValidateSignature(true);
@@ -249,9 +267,93 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
                 .setAttribute(OIDCConfigAttributes.AUTHORIZATION_SIGNED_RESPONSE_ALG, Algorithm.HS512)
                 .setAttribute(OIDCConfigAttributes.ID_TOKEN_SIGNED_RESPONSE_ALG, Algorithm.HS512)
                 .update()) {
+            logInAsUserInIDP();
+            assertErrorPage("Unexpected error when authenticating with identity provider");
+        }
+    }
+
+    @Test
+    public void testSignatureVerificationHardcodedPublicKeyEd25519() throws Exception {
+        IdentityProviderRepresentation idpRep = getIdentityProvider();
+        OIDCIdentityProviderConfigRep cfg = new OIDCIdentityProviderConfigRep(idpRep);
+        cfg.setValidateSignature(true);
+        cfg.setUseJwksUrl(false);
+
+        rotateKeys(Algorithm.EdDSA, "eddsa-generated", new MultivaluedHashMap<>(
+                Map.of("eddsaEllipticCurveKey", List.of(Algorithm.Ed25519))));
+
+        KeysMetadataRepresentation.KeyMetadataRepresentation key = org.keycloak.testsuite.util.KeyUtils.findActiveSigningKey(providerRealm(), Algorithm.EdDSA);
+        cfg.setPublicKeySignatureVerifier(key.getPublicKey());
+        updateIdentityProvider(idpRep);
+
+        try (Closeable clientUpdater = ClientAttributeUpdater.forClient(adminClient, bc.providerRealmName(), bc.getIDPClientIdInProviderRealm())
+                .setAttribute(OIDCConfigAttributes.ACCESS_TOKEN_SIGNED_RESPONSE_ALG, Algorithm.EdDSA)
+                .setAttribute(OIDCConfigAttributes.AUTHORIZATION_SIGNED_RESPONSE_ALG, Algorithm.EdDSA)
+                .setAttribute(OIDCConfigAttributes.ID_TOKEN_SIGNED_RESPONSE_ALG, Algorithm.EdDSA)
+                .update()) {
 
             logInAsUserInIDPForFirstTime();
-            appPage.assertCurrent();
+            Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
+            AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
+
+            logInAsUserInIDP();
+            AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
+        }
+    }
+
+    @Test
+    public void testSignatureVerificationHardcodedPublicKeyEd448() throws Exception {
+        IdentityProviderRepresentation idpRep = getIdentityProvider();
+        OIDCIdentityProviderConfigRep cfg = new OIDCIdentityProviderConfigRep(idpRep);
+        cfg.setValidateSignature(true);
+        cfg.setUseJwksUrl(false);
+
+        rotateKeys(Algorithm.EdDSA, "eddsa-generated", new MultivaluedHashMap<>(
+                Map.of("eddsaEllipticCurveKey", List.of(Algorithm.Ed448))));
+
+        KeysMetadataRepresentation.KeyMetadataRepresentation key = org.keycloak.testsuite.util.KeyUtils.findActiveSigningKey(providerRealm(), Algorithm.EdDSA);
+        cfg.setPublicKeySignatureVerifier(key.getPublicKey());
+        updateIdentityProvider(idpRep);
+
+        try (Closeable clientUpdater = ClientAttributeUpdater.forClient(adminClient, bc.providerRealmName(), bc.getIDPClientIdInProviderRealm())
+                .setAttribute(OIDCConfigAttributes.ACCESS_TOKEN_SIGNED_RESPONSE_ALG, Algorithm.EdDSA)
+                .setAttribute(OIDCConfigAttributes.AUTHORIZATION_SIGNED_RESPONSE_ALG, Algorithm.EdDSA)
+                .setAttribute(OIDCConfigAttributes.ID_TOKEN_SIGNED_RESPONSE_ALG, Algorithm.EdDSA)
+                .update()) {
+
+            logInAsUserInIDPForFirstTime();
+            Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
+            AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
+
+            logInAsUserInIDP();
+            AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
+        }
+    }
+
+    @Test
+    public void testSignatureVerificationJwksAttributeRS256() throws Exception {
+        updateIdentityProviderWithJwks();
+
+        logInAsUserInIDPForFirstTime();
+        Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
+        AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
+
+        logInAsUserInIDP();
+        AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
+    }
+
+    @Test
+    public void testSignatureVerificationJwksAttributeES256() throws Exception {
+        rotateKeys(Algorithm.ES256, "ecdsa-generated");
+        updateIdentityProviderWithJwks();
+        try (Closeable clientUpdater = ClientAttributeUpdater.forClient(adminClient, bc.providerRealmName(), bc.getIDPClientIdInProviderRealm())
+                .setAttribute(OIDCConfigAttributes.ACCESS_TOKEN_SIGNED_RESPONSE_ALG, Algorithm.ES256)
+                .setAttribute(OIDCConfigAttributes.AUTHORIZATION_SIGNED_RESPONSE_ALG, Algorithm.ES256)
+                .setAttribute(OIDCConfigAttributes.ID_TOKEN_SIGNED_RESPONSE_ALG, Algorithm.ES256)
+                .update()) {
+
+            logInAsUserInIDPForFirstTime();
+            Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
             AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
 
             logInAsUserInIDP();
@@ -275,7 +377,7 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
 
         // Check that user is able to login
         logInAsUserInIDPForFirstTime();
-        appPage.assertCurrent();
+        Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
 
         AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
 
@@ -290,46 +392,46 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
         cfg.setPublicKeySignatureVerifierKeyId(expectedKeyId);
         updateIdentityProvider(idpRep);
         logInAsUserInIDPWithReAuthenticate();
-        appPage.assertCurrent();
+        Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
         AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
 
         // Set key id to empty
         cfg.setPublicKeySignatureVerifierKeyId("");
         updateIdentityProvider(idpRep);
         logInAsUserInIDP();
-        appPage.assertCurrent();
+        Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
         AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
 
         // Unset key id
         cfg.setPublicKeySignatureVerifierKeyId(null);
         updateIdentityProvider(idpRep);
         logInAsUserInIDP();
-        appPage.assertCurrent();
+        Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
         AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
     }
 
 
     @Test
-    public void testClearKeysCache() throws Exception {
+    public void testClearKeysCache() {
         // Configure OIDC identity provider with JWKS URL
         updateIdentityProviderWithJwksUrl();
 
         // Check that user is able to login
         logInAsUserInIDPForFirstTime();
-        appPage.assertCurrent();
+        Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
 
         logoutFromRealm(getConsumerRoot(), bc.consumerRealmName());
 
         // Check that key is cached
         IdentityProviderRepresentation idpRep = getIdentityProvider();
         String expectedCacheKey = PublicKeyStorageUtils.getIdpModelCacheKey(consumerRealm().toRepresentation().getId(), idpRep.getInternalId());
-        TestingCacheResource cache = testingClient.testing(bc.consumerRealmName()).cache(InfinispanConnectionProvider.KEYS_CACHE_NAME);
-        Assert.assertTrue(cache.contains(expectedCacheKey));
+        KeycloakTestingClient.Server runOnServerConsumer = testingClient.server(bc.consumerRealmName());
+        Assertions.assertTrue(runOnServerConsumer.fetch(CacheHelper.contains(InfinispanConnectionProvider.KEYS_CACHE_NAME, expectedCacheKey)));
 
         // Clear cache and check nothing cached
         consumerRealm().clearKeysCache();
-        Assert.assertFalse(cache.contains(expectedCacheKey));
-        Assert.assertEquals(cache.size(), 0);
+        Assertions.assertFalse(runOnServerConsumer.fetch(CacheHelper.contains(InfinispanConnectionProvider.KEYS_CACHE_NAME, expectedCacheKey)));
+        Assertions.assertEquals(0, runOnServerConsumer.fetch(CacheHelper.size(InfinispanConnectionProvider.KEYS_CACHE_NAME)));
     }
 
 
@@ -341,15 +443,15 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
 
         // Check that user is able to login
         logInAsUserInIDPForFirstTime();
-        appPage.assertCurrent();
+        Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
 
         AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
 
         // Check that key is cached
         IdentityProviderRepresentation idpRep = getIdentityProvider();
         String expectedCacheKey = PublicKeyStorageUtils.getIdpModelCacheKey(consumerRealm().toRepresentation().getId(), idpRep.getInternalId());
-        TestingCacheResource cache = testingClient.testing(bc.consumerRealmName()).cache(InfinispanConnectionProvider.KEYS_CACHE_NAME);
-        Assert.assertTrue(cache.contains(expectedCacheKey));
+        KeycloakTestingClient.Server runOnServerConsumer = testingClient.server(bc.consumerRealmName());
+        Assertions.assertTrue(runOnServerConsumer.fetch(CacheHelper.contains(InfinispanConnectionProvider.KEYS_CACHE_NAME, expectedCacheKey)));
 
         // Update identityProvider to some bad JWKS_URL
         OIDCIdentityProviderConfigRep cfg = new OIDCIdentityProviderConfigRep(idpRep);
@@ -357,10 +459,10 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
         updateIdentityProvider(idpRep);
 
         // Check that key is not cached anymore
-        Assert.assertFalse(cache.contains(expectedCacheKey));
+        Assertions.assertFalse(runOnServerConsumer.fetch(CacheHelper.contains(InfinispanConnectionProvider.KEYS_CACHE_NAME, expectedCacheKey)));
 
         // Check that user is not able to login with IDP
-        setTimeOffset(20);
+        timeOffSet.set(20);
         logInAsUserInIDP();
         assertErrorPage("Unexpected error when authenticating with identity provider");
     }
@@ -377,7 +479,7 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
 
             // Check that user is able to login with ES256
             logInAsUserInIDPForFirstTime();
-            appPage.assertCurrent();
+            Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
             AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
 
             logInAsUserInIDP();
@@ -396,7 +498,7 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
 
             // Check that user is able to login with PS512
             logInAsUserInIDPForFirstTime();
-            appPage.assertCurrent();
+            Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
             AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
 
             logInAsUserInIDP();
@@ -412,7 +514,8 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
 
         // Set the same "kid" of the default key and newly created key.
         // Assumption is that used algorithm RS512 is NOT the realm default one. When the realm default is updated to RS512, this one will need to change
-        ComponentRepresentation newKeyRep = createComponentRep(Algorithm.RS512, "rsa-generated", providerRealm().toRepresentation().getId());
+        ComponentRepresentation newKeyRep = createComponentRep(Algorithm.RS512, "rsa-generated",
+                providerRealm().toRepresentation().getId(), new MultivaluedHashMap<>());
         newKeyRep.getConfig().putSingle(Attributes.KID_KEY, activeKid);
         try (Response response = providerRealm().components().add(newKeyRep)) {
             assertEquals(201, response.getStatus());
@@ -426,7 +529,7 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
 
             // Check that user is able to login with ES256
             logInAsUserInIDPForFirstTime();
-            Assert.assertTrue(appPage.isCurrent());
+            Assertions.assertTrue(oauth.parseLoginResponse().isSuccess());
             AccountHelper.logout(adminClient.realm(bc.consumerRealmName()), bc.getUserLogin());
 
             logInAsUserInIDP();
@@ -435,11 +538,15 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
     }
 
     private void rotateKeys(String algorithm, String providerId) {
+        rotateKeys(algorithm, providerId, new MultivaluedHashMap<>());
+    }
+
+    private void rotateKeys(String algorithm, String providerId, MultivaluedHashMap<String,String> extra) {
         String activeKid = providerRealm().keys().getKeyMetadata().getActive().get(algorithm);
 
         // Rotate public keys on the parent broker
         String realmId = providerRealm().toRepresentation().getId();
-        ComponentRepresentation keys = createComponentRep(algorithm, providerId, realmId);
+        ComponentRepresentation keys = createComponentRep(algorithm, providerId, realmId, extra);
         try (Response response = providerRealm().components().add(keys)) {
             assertEquals(201, response.getStatus());
         }
@@ -448,15 +555,16 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
         assertNotEquals(activeKid, updatedActiveKid);
     }
 
-    private ComponentRepresentation createComponentRep(String algorithm, String providerId, String realmId) {
+    private ComponentRepresentation createComponentRep(String algorithm, String providerId, String realmId, MultivaluedHashMap<String,String> extra) {
         ComponentRepresentation keys = new ComponentRepresentation();
         keys.setName("generated");
         keys.setProviderType(KeyProvider.class.getName());
         keys.setProviderId(providerId);
         keys.setParentId(realmId);
-        keys.setConfig(new MultivaluedHashMap<>());
-        keys.getConfig().putSingle("priority", Long.toString(System.currentTimeMillis()));
-        keys.getConfig().putSingle("algorithm", algorithm);
+        MultivaluedHashMap<String, String> config = new MultivaluedHashMap<>(extra);
+        keys.setConfig(config);
+        config.putSingle("priority", Long.toString(System.currentTimeMillis()));
+        config.putSingle("algorithm", algorithm);
         return keys;
     }
 
@@ -478,7 +586,7 @@ public class KcOIDCBrokerWithSignatureTest extends AbstractBaseBrokerTest {
         }
 
         String updatedActiveKid = providerRealm().keys().getKeyMetadata().getActive().get(algorithm);
-        Assert.assertNotNull(updatedActiveKid);
+        Assertions.assertNotNull(updatedActiveKid);
     }
 
     private RealmResource providerRealm() {

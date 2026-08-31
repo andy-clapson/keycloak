@@ -49,16 +49,16 @@ public abstract class JwsToken {
 
     protected JWSInput jwsInput;
 
-    public JwsToken(String jws) {
+    protected JwsToken(String jws) {
         parse(jws);
     }
 
-    public JwsToken(JWSHeader jwsHeader, ObjectNode payload) {
+    protected JwsToken(JWSHeader jwsHeader, ObjectNode payload) {
         this.jwsHeader = jwsHeader;
         this.payload = payload;
     }
 
-    public JwsToken(JWSHeader jwsHeader, ObjectNode payload, SignatureSignerContext signerContext) {
+    protected JwsToken(JWSHeader jwsHeader, ObjectNode payload, SignatureSignerContext signerContext) {
         this.jwsHeader = jwsHeader;
         this.payload = payload;
         this.jws = sign(signerContext);
@@ -78,6 +78,15 @@ public abstract class JwsToken {
 
     public void verifySignature(SignatureVerifierContext verifier) throws VerificationException {
         Objects.requireNonNull(verifier, "verifier must not be null");
+        String headerAlgorithm = jwsHeader == null || jwsHeader.getAlgorithm() == null
+                ? null
+                : jwsHeader.getRawAlgorithm();
+        String verifierAlgorithm = verifier.getAlgorithm();
+        if (headerAlgorithm == null || verifierAlgorithm == null || !headerAlgorithm.equals(verifierAlgorithm)) {
+            throw new VerificationException(String.format(
+                    "JWS header algorithm '%s' does not match verifier algorithm '%s'",
+                    headerAlgorithm, verifierAlgorithm));
+        }
         try {
             if (!verifier.verify(jwsInput.getEncodedSignatureInput().getBytes(StandardCharsets.UTF_8),
                                  jwsInput.getSignature())) {

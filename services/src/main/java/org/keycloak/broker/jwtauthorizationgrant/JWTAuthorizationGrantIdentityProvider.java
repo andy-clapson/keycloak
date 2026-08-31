@@ -11,11 +11,11 @@ import org.keycloak.crypto.KeyWrapper;
 import org.keycloak.crypto.SignatureProvider;
 import org.keycloak.jose.jws.JWSHeader;
 import org.keycloak.jose.jws.JWSInput;
-import org.keycloak.keys.PublicKeyStorageProvider;
-import org.keycloak.keys.PublicKeyStorageUtils;
+import org.keycloak.keys.loader.PublicKeyStorageManager;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.protocol.oidc.JWTAuthorizationGrantValidationContext;
+import org.keycloak.representations.IDToken;
 import org.keycloak.services.Urls;
 import org.keycloak.utils.StringUtil;
 
@@ -40,7 +40,11 @@ public class JWTAuthorizationGrantIdentityProvider implements JWTAuthorizationGr
         }
 
         BrokeredIdentityContext user = new BrokeredIdentityContext(context.getJWT().getSubject(), getConfig());
-        user.setUsername(context.getJWT().getSubject());
+        String username = (String) context.getJWT().getOtherClaims().get(IDToken.PREFERRED_USERNAME);
+        if (username == null) {
+            username = context.getJWT().getSubject();
+        }
+        user.setUsername(username);
         return user;
     }
 
@@ -76,20 +80,25 @@ public class JWTAuthorizationGrantIdentityProvider implements JWTAuthorizationGr
     }
 
     @Override
+    public boolean isLimitAccessTokenExpiration() {
+        return getConfig().isJwtAuthorizationGrantLimitAccessTokenExp();
+    }
+
+    @Override
     public JWTAuthorizationGrantIdentityProviderConfig getConfig() {
         return this.config instanceof  JWTAuthorizationGrantIdentityProviderConfig ? (JWTAuthorizationGrantIdentityProviderConfig)this.config : null;
     }
 
     private boolean verifySignature(JWSInput jws) {
         try {
-            String jwkurl = config.getJwksUrl();
             JWSHeader header = jws.getHeader();
-            String kid = header.getKeyId();
             String alg = header.getRawAlgorithm();
-            String modelKey = PublicKeyStorageUtils.getIdpModelCacheKey(session.getContext().getRealm().getId(), config.getInternalId());
 
-            PublicKeyStorageProvider keyStorage = session.getProvider(PublicKeyStorageProvider.class);
-            KeyWrapper publicKey = keyStorage.getPublicKey(modelKey, kid, alg, new JWTAuthorizationGrantJWKSEndpointLoader(session, jwkurl));
+            KeyWrapper publicKey = PublicKeyStorageManager.getIdentityProviderKeyWrapper(session, session.getContext().getRealm(), getConfig(), jws);
+            if (publicKey == null) {
+                LOGGER.debugf("Failed to verify token, key not found for algorithm %s", alg);
+                return false;
+            }
 
             SignatureProvider signatureProvider = session.getProvider(SignatureProvider.class, alg);
             if (signatureProvider == null) {
